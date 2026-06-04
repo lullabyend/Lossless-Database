@@ -57,7 +57,7 @@ To ensure the integrity of `canvas.json` and prevent layout or loading issues, m
 
 * **Aspect Ratio:** `9:16` (Vertical Canvas is required for mobile playback).
 * **Format:** `.mp4` or `.m3u8` files.
-* **File Size:** Max **25MB** for Cloudflare Pages builds (recommended: **< 5MB** for faster buffering and low data usage).
+* **File Size:** Max **5MB** for faster buffering and low data usage.
 * **Looping:** 5–20 seconds duration with a clean loop transition.
 
 ---

@@ -67,7 +67,7 @@ jobs:
         run: exit 1
 
       - name: Auto-Merge Pull Request
-        if: github.event_name == 'pull_request_target' && steps.run-validation.outcome == 'success'
+        if: github.event_name == 'pull_request_target' && steps.run-validation.outcome == 'success' && steps.run-validation.outputs.auto_merge == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

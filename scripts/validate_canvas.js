@@ -35,6 +35,46 @@ function getModifiedFiles() {
   }
 }
 
+function getBaselineCanvas() {
+  try {
+    let baselineContent = '';
+    try {
+      baselineContent = execSync('git show main:canvas.json', { stdio: ['pipe', 'pipe', 'ignore'] }).toString();
+    } catch (e) {
+      try {
+        baselineContent = execSync('git show origin/main:canvas.json', { stdio: ['pipe', 'pipe', 'ignore'] }).toString();
+      } catch (e2) {
+        console.warn('Warning: Could not get baseline canvas.json from git.');
+        return null;
+      }
+    }
+    return JSON.parse(baselineContent);
+  } catch (err) {
+    console.warn('Warning: Error parsing baseline canvas.json:', err.message);
+    return null;
+  }
+}
+
+function getItemTypeAndName(item) {
+  const songName = (item.song || '').trim().toLowerCase();
+  const artistName = (item.artist || '').trim().toLowerCase();
+  const url = item.url || '';
+  let isSong = false;
+  let isAlbum = false;
+  
+  try {
+    const urlObj = new URL(url);
+    const pathname = urlObj.pathname;
+    if (/\/Song\//i.test(pathname)) isSong = true;
+    else if (/\/Album\//i.test(pathname)) isAlbum = true;
+  } catch (e) {
+    if (/\/Song\//i.test(url)) isSong = true;
+    else if (/\/Album\//i.test(url)) isAlbum = true;
+  }
+  
+  return { songName, artistName, isSong, isAlbum, url };
+}
+
 function validate() {
   console.log('--- Starting canvas.json validation ---');
 
@@ -212,12 +252,93 @@ function validate() {
     });
     
     fs.writeFileSync('validation_report.md', reportContent);
+    
+    if (process.env.GITHUB_OUTPUT) {
+      fs.appendFileSync(process.env.GITHUB_OUTPUT, `auto_merge=false\n`);
+    }
     process.exit(1);
   } else {
     console.log('\n--- Validation PASSED! ---');
-    reportContent = `### ✅ Validation Passed!\n\nAll conditions met (file sizes <= 5MB, correct naming series, no duplicates). Auto-merging...`;
+    
+    // Check if song or album already exists in baseline database
+    let shouldDisableAutoMerge = false;
+    const matchedExistingNames = [];
+    const baselineData = getBaselineCanvas();
+    
+    if (baselineData && baselineData.items) {
+      const baselineItems = baselineData.items;
+      
+      const baselineSongs = new Set();
+      const baselineAlbums = new Set();
+      const baselineAlbumUrls = new Set();
+      
+      baselineItems.forEach(item => {
+        const { songName, isSong, isAlbum, url } = getItemTypeAndName(item);
+        if (isSong && songName) {
+          baselineSongs.add(songName);
+        }
+        if (isAlbum) {
+          if (songName) {
+            baselineAlbums.add(songName);
+          }
+          const match = url.match(/\/Album\/(.+)$/i);
+          if (match) {
+            baselineAlbumUrls.add(match[1].toLowerCase());
+          }
+        }
+      });
+
+      const baselineItemKeys = new Set(
+        baselineItems.map(item => `${item.song || ''}|${item.artist || ''}|${item.url || ''}`)
+      );
+
+      const newOrModifiedItems = items.filter(item => {
+        const key = `${item.song || ''}|${item.artist || ''}|${item.url || ''}`;
+        return !baselineItemKeys.has(key);
+      });
+
+      newOrModifiedItems.forEach(item => {
+        const { songName, isSong, isAlbum, url } = getItemTypeAndName(item);
+        if (isSong && songName && baselineSongs.has(songName)) {
+          shouldDisableAutoMerge = true;
+          matchedExistingNames.push(`Song: "${item.song}"`);
+        }
+        if (isAlbum) {
+          let isDup = false;
+          if (songName && baselineAlbums.has(songName)) {
+            isDup = true;
+            shouldDisableAutoMerge = true;
+            matchedExistingNames.push(`Album Track: "${item.song}"`);
+          }
+          const match = url.match(/\/Album\/(.+)$/i);
+          if (match && baselineAlbumUrls.has(match[1].toLowerCase())) {
+            if (!isDup) {
+              shouldDisableAutoMerge = true;
+              matchedExistingNames.push(`Album File: "${match[1]}"`);
+            }
+          }
+        }
+      });
+    }
+
+    const autoMerge = !shouldDisableAutoMerge;
+    
+    if (shouldDisableAutoMerge) {
+      reportContent = `### ✅ Validation Passed (Manual Review Required)\n\nAll conditions met (file sizes <= 5MB, correct naming series, no internal duplicates).\n\n⚠️ **Auto-merge is disabled** because the following added/modified items already exist in the main database:\n`;
+      matchedExistingNames.forEach(name => {
+        reportContent += `- ${name}\n`;
+      });
+      reportContent += `\nA maintainer must manually review and merge this pull request.`;
+    } else {
+      reportContent = `### ✅ Validation Passed!\n\nAll conditions met (file sizes <= 5MB, correct naming series, no duplicates). Auto-merging...`;
+    }
+    
     fs.writeFileSync('validation_report.md', reportContent);
-    console.log(`Verification completed successfully.`);
+    
+    if (process.env.GITHUB_OUTPUT) {
+      fs.appendFileSync(process.env.GITHUB_OUTPUT, `auto_merge=${autoMerge ? 'true' : 'false'}\n`);
+    }
+    console.log(`Verification completed successfully. Auto-merge: ${autoMerge}`);
   }
 }
 
